@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leitor de QR e Código de Barras</title>
+<style>
+  body { font-family: sans-serif; margin: 0 auto; padding: 16px; background: #f5f5f5; max-width: 500px; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  button { width: 100%; padding: 16px; font-size: 18px; border: 0; border-radius: 10px; margin: 6px 0; background: #2d3277; color: #fff; }
+  button.sec { background: #777; }
+  button.danger { background: #c0392b; }
+  #reader { width: 100%; margin-bottom: 8px; display: none; }
+  #lista { background: #fff; border-radius: 10px; padding: 4px 10px; max-height: 50vh; overflow-y: auto; }
+  .item { padding: 10px 0; border-bottom: 1px solid #eee; }
+  .item b { word-break: break-all; }
+  .item small { color: #888; display: block; }
+</style>
+</head>
+<body>
+<h1>Leitor de QR e Código de Barras</h1>
+
+<input id="facility" type="text" placeholder="Nome da facility" style="width:100%;box-sizing:border-box;padding:14px;font-size:18px;border:1px solid #ccc;border-radius:10px;margin-bottom:8px">
+
+<div id="reader"></div>
+<button id="btnEscanear">📷 Escanear</button>
+<button id="btnParar" class="sec">Parar câmera</button>
+
+<p id="status" style="color:#555;min-height:1.2em"></p>
+<p>Total: <b id="contador">0</b></p>
+<div id="lista"></div>
+
+<button id="btnExportar" class="sec">⬇️ Baixar CSV (abre no Sheets)</button>
+<button id="btnLimpar" class="danger">Apagar tudo</button>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+  let registros = JSON.parse(localStorage.getItem('registros') || '[]');
+  let scanner = null;
+
+  function salvar() {
+    localStorage.setItem('registros', JSON.stringify(registros));
+  }
+
+  function render() {
+    const lista = document.getElementById('lista');
+    lista.innerHTML = '';
+    registros.slice().reverse().forEach(r => {
+      const div = document.createElement('div');
+      div.className = 'item';
+      const b = document.createElement('b');
+      b.textContent = r.codigo;
+      const small = document.createElement('small');
+      small.textContent = r.hora;
+      div.append(b, small);
+      lista.appendChild(div);
+    });
+    document.getElementById('contador').textContent = registros.length;
+  }
+
+  function mostrarStatus(msg) {
+    document.getElementById('status').textContent = msg;
+  }
+
+  function registrar(textoLido) {
+    const facility = document.getElementById('facility').value.trim();
+    if (!facility) {
+      mostrarStatus('Digite o nome da facility antes de ler.');
+      document.getElementById('facility').focus();
+      return;
+    }
+    const codigo = textoLido.replace(/\D/g, ''); // salva só os números
+    if (!codigo) {
+      mostrarStatus('Lido, mas sem números: ' + textoLido);
+      return;
+    }
+    const ultimo = registros[registros.length - 1];
+    if (ultimo && ultimo.codigo === codigo) return; // ignora a mesma leitura seguida
+    registros.push({ codigo, hora: new Date().toLocaleString('pt-BR') });
+    salvar();
+    render();
+    mostrarStatus('Lido: ' + codigo);
+    if (navigator.vibrate) navigator.vibrate(100);
+  }
+
+  async function iniciarCamera() {
+    mostrarStatus('Abrindo câmera...');
+    if (typeof Html5Qrcode === 'undefined') {
+      mostrarStatus('Erro: biblioteca do leitor não carregou. Verifique a internet e recarregue a página.');
+      return;
+    }
+    if (!window.isSecureContext) {
+      mostrarStatus('Erro: a câmera só funciona em página HTTPS (ex.: GitHub Pages), não direto do arquivo.');
+      return;
+    }
+    document.getElementById('reader').style.display = 'block';
+    document.getElementById('btnParar').style.display = 'block';
+    document.getElementById('btnEscanear').style.display = 'none';
+    try {
+      // Aceita QR Code e códigos de barras comuns
+      const formatos = typeof Html5QrcodeSupportedFormats !== 'undefined' ? [
+        Html5QrcodeSupportedFormats.QR_CODE,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.CODE_93,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.CODABAR
+      ] : undefined;
+      scanner = new Html5Qrcode('reader', { formatsToSupport: formatos, verbose: false });
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 300, height: 180 } },
+        texto => registrar(texto),
+        () => {}
+      );
+      mostrarStatus('Câmera ligada. Aponte para o QR code ou código de barras.');
+    } catch (e) {
+      mostrarStatus('Erro ao abrir a câmera: ' + (e && e.message ? e.message : e));
+      pararCamera();
+    }
+  }
+
+  async function pararCamera() {
+    if (scanner) {
+      try { await scanner.stop(); scanner.clear(); } catch (e) {}
+      scanner = null;
+    }
+    document.getElementById('reader').style.display = 'none';
+    document.getElementById('btnParar').style.display = 'none';
+    document.getElementById('btnEscanear').style.display = 'block';
+  }
+
+  function exportarCSV() {
+    const facility = document.getElementById('facility').value.trim();
+    if (!facility) {
+      mostrarStatus('Digite o nome da facility antes de baixar o CSV.');
+      document.getElementById('facility').focus();
+      return;
+    }
+    localStorage.setItem('facility', facility);
+    const linhas = registros.map(r =>
+      `"${r.codigo.replace(/"/g, '""')}","${r.hora}"`
+    );
+    const csv = `"Facility","${facility.replace(/"/g, '""')}"\n` + 'Codigo,DataHora\n' + linhas.join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `leituras_${facility.replace(/[^\w-]+/g, '_')}.csv`;
+    a.click();
+  }
+
+  function limpar() {
+    if (confirm('Apagar todas as leituras?')) {
+      registros = [];
+      salvar();
+      render();
+    }
+  }
+
+  const campoFacility = document.getElementById('facility');
+  campoFacility.value = localStorage.getItem('facility') || '';
+  campoFacility.oninput = () => localStorage.setItem('facility', campoFacility.value.trim());
+
+  document.getElementById('btnEscanear').onclick = iniciarCamera;
+  document.getElementById('btnParar').onclick = pararCamera;
+  document.getElementById('btnExportar').onclick = exportarCSV;
+  document.getElementById('btnLimpar').onclick = limpar;
+
+  render();
+</script>
+</body>
+</html>
