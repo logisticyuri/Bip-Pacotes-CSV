@@ -62,6 +62,13 @@
     document.getElementById('status').textContent = msg;
   }
 
+  let ultimaLeitura = { codigo: null, quando: 0 };
+
+  function piscar(cor) {
+    document.body.style.background = cor;
+    setTimeout(() => { document.body.style.background = '#f5f5f5'; }, 600);
+  }
+
   function registrar(textoLido) {
     const facility = document.getElementById('facility').value.trim();
     if (!facility) {
@@ -74,12 +81,23 @@
       mostrarStatus('Lido, mas sem números: ' + textoLido);
       return;
     }
-    const ultimo = registros[registros.length - 1];
-    if (ultimo && ultimo.codigo === codigo) return; // ignora a mesma leitura seguida
+    // Mesma etiqueta ainda parada na câmera: ignora por 3 segundos
+    const agora = Date.now();
+    if (ultimaLeitura.codigo === codigo && agora - ultimaLeitura.quando < 3000) return;
+    ultimaLeitura = { codigo, quando: agora };
+
+    if (registros.some(r => r.codigo === codigo)) {
+      piscar('#e74c3c');
+      mostrarStatus('DUPLICADO (não contado): ' + codigo);
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      return;
+    }
+
     registros.push({ codigo, hora: new Date().toLocaleString('pt-BR') });
     salvar();
     render();
-    mostrarStatus('Lido: ' + codigo);
+    piscar('#2ecc71');
+    mostrarStatus('OK: ' + codigo);
     if (navigator.vibrate) navigator.vibrate(100);
   }
 
